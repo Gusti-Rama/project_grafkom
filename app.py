@@ -27,7 +27,7 @@ class DrawingApp:
         self.redo_stack = []
         self.selected_object = None
         
-        # Tracking scale and rotations
+        # Tracking scale
         self.current_scales = {}
 
         self.setup_ui()
@@ -91,6 +91,15 @@ class DrawingApp:
         tk.Button(button_frame1, text="↘", width=3, command=lambda: self.move_object(1, 1)).grid(row=2, column=2, padx=1)
         
         tk.Label(self.translation_frame, text="(Select object with 'Select' tool)", font=("Arial", 8)).pack(side=tk.LEFT, padx=10)
+
+        # Reflection Control Panel (NEW)
+        self.reflection_frame = tk.Frame(self.root, bd=2, relief=tk.RAISED)
+        self.reflection_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=2)
+
+        tk.Label(self.reflection_frame, text="Reflection (Mirror):").pack(side=tk.LEFT, padx=5)
+        tk.Button(self.reflection_frame, text="Horizontal (↔)", command=lambda: self.apply_reflection('x')).pack(side=tk.LEFT, padx=5)
+        tk.Button(self.reflection_frame, text="Vertical (↕)", command=lambda: self.apply_reflection('y')).pack(side=tk.LEFT, padx=5)
+        tk.Label(self.reflection_frame, text="(Flips shape relative to its center)", font=("Arial", 8)).pack(side=tk.LEFT, padx=10)
 
         # Rotation Control Panel
         self.rotation_frame = tk.Frame(self.root, bd=2, relief=tk.RAISED)
@@ -186,7 +195,6 @@ class DrawingApp:
             self.undo_stack.append(item)
             self.last_x, self.last_y = event.x, event.y
 
-        # For temporary drag visual, we stick to standard tkinter shapes for performance
         elif self.tool in ["line", "rect", "oval", "square", "circle", "triangle"]:
             if self.temp_shape:
                 self.canvas.delete(self.temp_shape)
@@ -218,20 +226,15 @@ class DrawingApp:
                     self.last_x - size, self.last_y + size,  
                     self.last_x + size, self.last_y + size   
                 ]
-                self.temp_shape = self.canvas.create_polygon(*points, outline=self.brush_color,
-                                                             fill="", width=self.brush_size)
+                self.temp_shape = self.canvas.create_polygon(*points, outline=self.brush_color, fill="", width=self.brush_size)
 
     def reset(self, event):
         if self.tool in ["line", "rect", "oval", "square", "circle", "triangle"] and self.temp_shape:
             coords = self.canvas.coords(self.temp_shape)
             self.canvas.delete(self.temp_shape)
             
-            # Determines if the shape should be filled based on holding mouse > 1s
             fill_color = self.brush_color if (time.time() - self.start_time > 1) else ""
             
-            # We convert all standard boxed-shapes (Rect, Square, Oval, Circle) into polygons.
-            # This is crucial because tkinter cannot natively rotate bounding-box shapes, 
-            # but it CAN smoothly rotate polygons via trigonometry!
             if self.tool == "line":
                 item = self.canvas.create_line(*coords, fill=self.brush_color, width=self.brush_size)
             
@@ -253,7 +256,7 @@ class DrawingApp:
                 cx, cy = (x1+x2)/2, (y1+y2)/2
                 rx, ry = abs(x2-x1)/2, abs(y2-y1)/2
                 points = []
-                for i in range(72): # Create high-res polygon approximation of oval
+                for i in range(72):
                     a = math.radians(i * 5)
                     points.extend([cx + rx * math.cos(a), cy + ry * math.sin(a)])
                 item = self.canvas.create_polygon(*points, outline=self.brush_color, fill=fill_color, width=self.brush_size, smooth=True)
@@ -300,22 +303,12 @@ class DrawingApp:
 
         self.last_x, self.last_y = None, None
 
-    def apply_rotation(self):
-        """Rotate the object relative to its current angle using coordinate math"""
+    def apply_reflection(self, axis):
+        """Reflect the object horizontally or vertically across its own center axis"""
         if not self.selected_object:
-            return
-            
-        try:
-            angle_deg = float(self.rotate_var.get())
-        except ValueError:
             return
 
         item_type = self.canvas.type(self.selected_object)
-        
-        # In Tkinter coordinate system, positive angle = clockwise visually
-        angle_rad = math.radians(angle_deg)
-        cos_a = math.cos(angle_rad)
-        sin_a = math.sin(angle_rad)
 
         if item_type in ["polygon", "line"]:
             coords = self.canvas.coords(self.selected_object)
@@ -329,10 +322,51 @@ class DrawingApp:
 
             new_coords = []
             for i in range(0, len(coords), 2):
+                x = coords[i]
+                y = coords[i+1]
+                
+                if axis == 'x':  # Flip horizontally (across vertical center line)
+                    nx = 2 * cx - x
+                    ny = y
+                else:            # Flip vertically (across horizontal center line)
+                    nx = x
+                    ny = 2 * cy - y
+                    
+                new_coords.extend([nx, ny])
+            
+            self.canvas.coords(self.selected_object, *new_coords)
+            
+        elif item_type == "text":
+            print("Native Tkinter text cannot be mirrored easily. Skipping text reflection.")
+
+    def apply_rotation(self):
+        if not self.selected_object:
+            return
+            
+        try:
+            angle_deg = float(self.rotate_var.get())
+        except ValueError:
+            return
+
+        item_type = self.canvas.type(self.selected_object)
+        angle_rad = math.radians(angle_deg)
+        cos_a = math.cos(angle_rad)
+        sin_a = math.sin(angle_rad)
+
+        if item_type in ["polygon", "line"]:
+            coords = self.canvas.coords(self.selected_object)
+            if not coords: return
+            
+            bbox = self.canvas.bbox(self.selected_object)
+            if not bbox: return
+            cx = (bbox[0] + bbox[2]) / 2.0
+            cy = (bbox[1] + bbox[3]) / 2.0
+
+            new_coords = []
+            for i in range(0, len(coords), 2):
                 x = coords[i] - cx
                 y = coords[i+1] - cy
                 
-                # Apply 2D rotation matrix
                 nx = x * cos_a - y * sin_a
                 ny = x * sin_a + y * cos_a
                 
@@ -341,14 +375,12 @@ class DrawingApp:
             self.canvas.coords(self.selected_object, *new_coords)
             
         elif item_type == "text":
-            # Tkinter text supports angle naturally
             try:
                 current_angle = float(self.canvas.itemcget(self.selected_object, 'angle'))
             except:
                 current_angle = 0.0
             self.canvas.itemconfigure(self.selected_object, angle=current_angle - angle_deg)
             
-        # Clear the box after rotation for easy subsequent rotations
         self.rotate_entry.delete(0, tk.END)
 
     def apply_absolute_scale(self):
@@ -364,7 +396,6 @@ class DrawingApp:
         coords = self.canvas.coords(self.selected_object)
         if not coords: return
         
-        # Calculate the mathematical center point of the object
         x_coords = coords[0::2]
         y_coords = coords[1::2]
         center_x = sum(x_coords) / len(x_coords)
