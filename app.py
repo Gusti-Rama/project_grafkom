@@ -1,4 +1,3 @@
-
 import tkinter as tk
 from tkinter import colorchooser, filedialog, simpledialog
 from PIL import ImageTk, Image, ImageGrab
@@ -26,6 +25,9 @@ class DrawingApp:
         self.undo_stack = []
         self.redo_stack = []
         self.selected_object = None
+        
+        # Dictionary to track the current scaling factor of each object
+        self.current_scales = {}
 
         self.setup_ui()
 
@@ -72,7 +74,6 @@ class DrawingApp:
         self.pixel_entry.pack(side=tk.LEFT, padx=(0, 10))
 
         # Direction buttons (8-directional)
-        # Row 1: UP-LEFT, UP, UP-RIGHT
         button_frame1 = tk.Frame(self.translation_frame)
         button_frame1.pack(side=tk.LEFT, padx=5)
 
@@ -80,17 +81,30 @@ class DrawingApp:
         tk.Button(button_frame1, text="↑", width=3, command=lambda: self.move_object(0, -1)).grid(row=0, column=1, padx=1)
         tk.Button(button_frame1, text="↗", width=3, command=lambda: self.move_object(1, -1)).grid(row=0, column=2, padx=1)
 
-        # Row 2: LEFT, CENTER, RIGHT
         tk.Button(button_frame1, text="←", width=3, command=lambda: self.move_object(-1, 0)).grid(row=1, column=0, padx=1)
         tk.Button(button_frame1, text="●", width=3, command=self.deselect_object, relief=tk.SUNKEN).grid(row=1, column=1, padx=1)
         tk.Button(button_frame1, text="→", width=3, command=lambda: self.move_object(1, 0)).grid(row=1, column=2, padx=1)
 
-        # Row 3: DOWN-LEFT, DOWN, DOWN-RIGHT
         tk.Button(button_frame1, text="↙", width=3, command=lambda: self.move_object(-1, 1)).grid(row=2, column=0, padx=1)
         tk.Button(button_frame1, text="↓", width=3, command=lambda: self.move_object(0, 1)).grid(row=2, column=1, padx=1)
         tk.Button(button_frame1, text="↘", width=3, command=lambda: self.move_object(1, 1)).grid(row=2, column=2, padx=1)
 
         tk.Label(self.translation_frame, text="(Select object with 'Select' tool)", font=("Arial", 8)).pack(side=tk.LEFT, padx=10)
+
+        # Scaling Control Panel
+        self.scale_frame = tk.Frame(self.root, bd=2, relief=tk.RAISED)
+        self.scale_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=0)
+
+        tk.Label(self.scale_frame, text="Scaling:").pack(side=tk.LEFT, padx=5)
+        self.scale_var = tk.DoubleVar(value=1.0)
+
+        for s in range(25, 225, 25): # Loop generating 25 to 200 increments of 25
+            tk.Radiobutton(
+                self.scale_frame, text=f"{s}%", variable=self.scale_var, value=s/100.0,
+                command=self.apply_absolute_scale
+            ).pack(side=tk.LEFT, padx=2)
+            
+        tk.Label(self.scale_frame, text="(Select shape first to change size)", font=("Arial", 8)).pack(side=tk.LEFT, padx=10)
 
         self.canvas.bind("<ButtonPress-1>", self.start_draw)
         self.canvas.bind("<B1-Motion>", self.draw)
@@ -104,6 +118,7 @@ class DrawingApp:
         elif tool == "clear":
             self.canvas.delete("all")
             self.undo_stack.clear()
+            self.current_scales.clear()
             self.deselect_object()
         elif tool == "save":
             self.save_canvas()
@@ -189,11 +204,10 @@ class DrawingApp:
                                                           outline=self.brush_color, width=self.brush_size)
             elif self.tool == "triangle":
                 size = max(abs(event.x - self.last_x), abs(event.y - self.last_y))
-                # Triangle pointing up
                 points = [
-                    self.last_x, self.last_y - size,  # top
-                    self.last_x - size, self.last_y + size,  # bottom-left
-                    self.last_x + size, self.last_y + size   # bottom-right
+                    self.last_x, self.last_y - size, 
+                    self.last_x - size, self.last_y + size,  
+                    self.last_x + size, self.last_y + size   
                 ]
                 self.temp_shape = self.canvas.create_polygon(*points, outline=self.brush_color,
                                                              fill="", width=self.brush_size)
@@ -230,9 +244,9 @@ class DrawingApp:
                 elif self.tool == "triangle":
                     size = max(abs(event.x - self.last_x), abs(event.y - self.last_y))
                     points = [
-                        self.last_x, self.last_y - size,  # top
-                        self.last_x - size, self.last_y + size,  # bottom-left
-                        self.last_x + size, self.last_y + size   # bottom-right
+                        self.last_x, self.last_y - size,  
+                        self.last_x - size, self.last_y + size,  
+                        self.last_x + size, self.last_y + size   
                     ]
                     item = self.canvas.create_polygon(*points, outline=self.brush_color,
                                                      fill="", width=self.brush_size)
@@ -244,15 +258,51 @@ class DrawingApp:
                 item = self.canvas.create_text(event.x, event.y, text=text, fill=self.brush_color, font=("Arial", 14), anchor=tk.NW)
                 self.undo_stack.append(item)
         elif self.tool == "select":
-            # Find clicked object
             items_at_click = self.canvas.find_overlapping(event.x - 2, event.y - 2, event.x + 2, event.y + 2)
             if items_at_click:
-                self.selected_object = items_at_click[-1]  # Get topmost item
+                self.selected_object = items_at_click[-1]  
                 self.highlight_selected()
+                
+                # Fetch shape's current size state to update the radio button properly
+                self.scale_var.set(self.current_scales.get(self.selected_object, 1.0))
             else:
                 self.deselect_object()
 
         self.last_x, self.last_y = None, None
+
+    def apply_absolute_scale(self):
+        """Scale the object absolutely based on user selected percentage"""
+        if not self.selected_object:
+            return
+            
+        target_scale = self.scale_var.get()
+        current_scale = self.current_scales.get(self.selected_object, 1.0)
+        
+        if target_scale == current_scale:
+            return
+            
+        # Calculate exactly how much bigger/smaller it needs to get relative to current form
+        relative_factor = target_scale / current_scale
+        
+        coords = self.canvas.coords(self.selected_object)
+        if not coords: return
+        
+        # Calculate the mathematical center point of the object
+        x_coords = coords[0::2]
+        y_coords = coords[1::2]
+        center_x = sum(x_coords) / len(x_coords)
+        center_y = sum(y_coords) / len(y_coords)
+        
+        # Scale the coordinates relative to its center
+        self.canvas.scale(self.selected_object, center_x, center_y, relative_factor, relative_factor)
+        
+        # Adjust text font size if text is scaled
+        if self.canvas.type(self.selected_object) == "text":
+            new_size = int(14 * target_scale)
+            self.canvas.itemconfigure(self.selected_object, font=("Arial", max(1, new_size)))
+            
+        # Update the dictionary storing current shapes sizes
+        self.current_scales[self.selected_object] = target_scale
 
     def save_canvas(self):
         self.root.update()
@@ -266,18 +316,19 @@ class DrawingApp:
             print(f"Saved to {filepath}")
 
     def highlight_selected(self):
-        """Highlight the selected object with a dashed outline"""
         if self.selected_object:
             self.canvas.itemconfig(self.selected_object, dash=(2, 2), width=2)
 
     def deselect_object(self):
-        """Deselect the current object"""
         if self.selected_object:
             self.canvas.itemconfig(self.selected_object, dash=())
         self.selected_object = None
+        
+        # Reset the scaling radio buttons to 100% when no item is selected
+        if hasattr(self, 'scale_var'):
+            self.scale_var.set(1.0)
 
     def move_object(self, dx, dy):
-        """Move the selected object by dx, dy multiplied by pixel value"""
         if not self.selected_object:
             return
         try:
