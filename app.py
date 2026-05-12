@@ -92,7 +92,7 @@ class DrawingApp:
         
         tk.Label(self.translation_frame, text="(Select object with 'Select' tool)", font=("Arial", 8)).pack(side=tk.LEFT, padx=10)
 
-        # Reflection Control Panel (NEW)
+        # Reflection Control Panel
         self.reflection_frame = tk.Frame(self.root, bd=2, relief=tk.RAISED)
         self.reflection_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=2)
 
@@ -100,6 +100,19 @@ class DrawingApp:
         tk.Button(self.reflection_frame, text="Horizontal (↔)", command=lambda: self.apply_reflection('x')).pack(side=tk.LEFT, padx=5)
         tk.Button(self.reflection_frame, text="Vertical (↕)", command=lambda: self.apply_reflection('y')).pack(side=tk.LEFT, padx=5)
         tk.Label(self.reflection_frame, text="(Flips shape relative to its center)", font=("Arial", 8)).pack(side=tk.LEFT, padx=10)
+
+        # Shear Control Panel (NEW)
+        self.shear_frame = tk.Frame(self.root, bd=2, relief=tk.RAISED)
+        self.shear_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=2)
+
+        tk.Label(self.shear_frame, text="Shear Factor:").pack(side=tk.LEFT, padx=5)
+        self.shear_var = tk.StringVar(value="0.5")  # Typical values are between -2.0 and 2.0
+        self.shear_entry = tk.Entry(self.shear_frame, textvariable=self.shear_var, width=5)
+        self.shear_entry.pack(side=tk.LEFT, padx=(0, 5))
+
+        tk.Button(self.shear_frame, text="Shear X", command=lambda: self.apply_shear('x')).pack(side=tk.LEFT, padx=5)
+        tk.Button(self.shear_frame, text="Shear Y", command=lambda: self.apply_shear('y')).pack(side=tk.LEFT, padx=5)
+        tk.Label(self.shear_frame, text="(Slants shape along axis. Try 0.5 or -0.5)", font=("Arial", 8)).pack(side=tk.LEFT, padx=10)
 
         # Rotation Control Panel
         self.rotation_frame = tk.Frame(self.root, bd=2, relief=tk.RAISED)
@@ -303,8 +316,47 @@ class DrawingApp:
 
         self.last_x, self.last_y = None, None
 
+    def apply_shear(self, axis):
+        """Applies a shear transformation to the shape along the X or Y axis."""
+        if not self.selected_object:
+            return
+
+        try:
+            factor = float(self.shear_var.get())
+        except ValueError:
+            return  # Ignore if user enters non-numeric text
+
+        item_type = self.canvas.type(self.selected_object)
+
+        if item_type in ["polygon", "line"]:
+            coords = self.canvas.coords(self.selected_object)
+            if not coords: return
+            
+            bbox = self.canvas.bbox(self.selected_object)
+            if not bbox: return
+            cx = (bbox[0] + bbox[2]) / 2.0
+            cy = (bbox[1] + bbox[3]) / 2.0
+
+            new_coords = []
+            for i in range(0, len(coords), 2):
+                x = coords[i] - cx
+                y = coords[i+1] - cy
+                
+                if axis == 'x':
+                    nx = x + (factor * y)
+                    ny = y
+                else:  # axis == 'y'
+                    nx = x
+                    ny = y + (factor * x)
+                    
+                new_coords.extend([nx + cx, ny + cy])
+            
+            self.canvas.coords(self.selected_object, *new_coords)
+            
+        elif item_type == "text":
+            print("Native Tkinter text cannot be sheared easily.")
+
     def apply_reflection(self, axis):
-        """Reflect the object horizontally or vertically across its own center axis"""
         if not self.selected_object:
             return
 
@@ -314,7 +366,6 @@ class DrawingApp:
             coords = self.canvas.coords(self.selected_object)
             if not coords: return
             
-            # Find the true center of the shape via its bounding box
             bbox = self.canvas.bbox(self.selected_object)
             if not bbox: return
             cx = (bbox[0] + bbox[2]) / 2.0
@@ -325,10 +376,10 @@ class DrawingApp:
                 x = coords[i]
                 y = coords[i+1]
                 
-                if axis == 'x':  # Flip horizontally (across vertical center line)
+                if axis == 'x':  
                     nx = 2 * cx - x
                     ny = y
-                else:            # Flip vertically (across horizontal center line)
+                else:            
                     nx = x
                     ny = 2 * cy - y
                     
